@@ -41,10 +41,54 @@ error( void *userdata, webvtt_uint line, webvtt_uint col, webvtt_error errcode )
 static void WEBVTT_CALLBACK
 cue( void *userdata, webvtt_cue *cue )
 {
-  /* do nothing! */
-  (void)userdata;
-  (void)cue;
-  printf( " the QUE body data:[%s]\n", webvtt_string_text(&cue->body) );
+  webvtt_node *mHead = cue->node_head;
+
+  printf("The que body data:[%s]\n", webvtt_string_text(&cue->body) );
+  printf("The internal data length:[%d]\n",mHead->data.internal_data->length);
+  printf("The internal data childern:[%s]\n",webvtt_string_text(mHead->data.internal_data->children));
+
+  if (!mHead || mHead->kind != WEBVTT_HEAD_NODE) {
+     printf(" mHead node is null\n");
+     return  -1;
+     }
+
+  printf("The letter type is [%d]\n",mHead->kind);
+  switch (mHead->kind) {
+    case WEBVTT_BOLD:
+      printf("BOLD\n");
+      break;
+
+    case WEBVTT_ITALIC:
+      printf("ITALIC\n");
+      break;
+
+    case WEBVTT_UNDERLINE:
+      printf("UNDERLINE\n");
+      break;
+
+    case WEBVTT_RUBY:
+      printf("RUBY\n");
+      break;
+
+    case WEBVTT_RUBY_TEXT:
+      printf("RUBY_TEXT\n");
+      break;
+
+    case WEBVTT_VOICE:
+      printf("VOICE\n");
+      break;
+
+    case WEBVTT_CLASS:
+      printf("CLASS\n");
+      break;
+
+    default:
+      printf("DEFAULT\n");
+      break;
+
+  }
+
+
 }
 
 int
@@ -74,7 +118,8 @@ main( int argc, char **argv )
   const char *input_file = 0;
   webvtt_status result;
   webvtt_parser vtt;
-  webvtt_node *mHead = NULL;
+
+//  webvtt_node *mHead = NULL;
   FILE *fh;
   int i;
   int ret = 0;
@@ -123,7 +168,7 @@ main( int argc, char **argv )
     return 1;
   }
 
-  webvtt_init_node(&mHead);
+//  webvtt_init_node(&mHead);
   if( ( result = webvtt_create_parser( &cue, &error, (void *)input_file, &vtt ) ) != WEBVTT_SUCCESS ) {
     fprintf( stderr, "error: failed to create VTT parser.\n" );
     fclose( fh );
@@ -131,6 +176,7 @@ main( int argc, char **argv )
   }
 
   ret = parse_fh( fh, vtt );
+#if 0
   webvtt_ref_node(mHead);
   // mHead should actually be the head of a node tree.
 
@@ -179,6 +225,7 @@ main( int argc, char **argv )
       break;
 
   }
+#endif
 
 
 webvtt_delete_parser( vtt );
