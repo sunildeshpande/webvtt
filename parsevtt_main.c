@@ -31,64 +31,116 @@
 #include <errno.h>
 #include <ctype.h>
 
+typedef struct sentiment_ctx {
+  const char *filename;
+  int cues_processed;
+  int total_score;
+  int positive_matches;
+  int negative_matches;
+} sentiment_ctx;
+
+typedef struct sentiment_result {
+  int score;
+  int positive_matches;
+  int negative_matches;
+  int total_words;
+} sentiment_result;
+
+static const char *const POSITIVE_WORDS[] = {
+  "good", "great", "excellent", "amazing", "happy", "joy", "love", "fantastic",
+  "positive", "success", "enjoy", "wonderful", "smile", "delight", "peace",
+  "win", "friendly", "brilliant", "calm", "progress", 0
+};
+
+static const char *const NEGATIVE_WORDS[] = {
+  "bad", "terrible", "awful", "sad", "angry", "hate", "horrible", "negative",
+  "fail", "failure", "worse", "worst", "pain", "fear", "problem", "loss",
+  "cry", "danger", "frustrated", "stress", 0
+};
+
+static int
+word_in_list( const char *word, const char *const *list )
+{
+  while( list && *list ) {
+    if( strcmp( word, *list ) == 0 ) {
+      return 1;
+    }
+    ++list;
+  }
+  return 0;
+}
+
+static void
+flush_word( const char *word, sentiment_result *result )
+{
+  if( !word || !*word ) {
+    return;
+  }
+  ++result->total_words;
+  if( word_in_list( word, POSITIVE_WORDS ) ) {
+    ++result->positive_matches;
+    ++result->score;
+  } else if( word_in_list( word, NEGATIVE_WORDS ) ) {
+    ++result->negative_matches;
+    --result->score;
+  }
+}
+
+static sentiment_result
+analyze_sentiment( const char *text )
+{
+  sentiment_result result = { 0 };
+  char token[64];
+  int idx = 0;
+  if( !text ) {
+    return result;
+  }
+  while( *text ) {
+    unsigned char ch = (unsigned char)*text;
+    if( isalpha( ch ) ) {
+      if( idx < (int)sizeof( token ) - 1 ) {
+        token[idx++] = (char)tolower( ch );
+      }
+    } else if( idx ) {
+      token[idx] = 0;
+      flush_word( token, &result );
+      idx = 0;
+    }
+    ++text;
+  }
+  if( idx ) {
+    token[idx] = 0;
+    flush_word( token, &result );
+  }
+  return result;
+}
+
 static int WEBVTT_CALLBACK
 error( void *userdata, webvtt_uint line, webvtt_uint col, webvtt_error errcode )
 {
-  fprintf(stderr, "`%s' at %u:%u -- error: %s\n", (const char *)userdata, line, col, webvtt_strerror( errcode ) );
+  sentiment_ctx *ctx = (sentiment_ctx *)userdata;
+  const char *label = ( ctx && ctx->filename ) ? ctx->filename : "input";
+  fprintf(stderr, "`%s' at %u:%u -- error: %s\n", label, line, col, webvtt_strerror( errcode ) );
   return -1; /* Die on all errors */
 }
 
 static void WEBVTT_CALLBACK
 cue( void *userdata, webvtt_cue *cue )
 {
-  webvtt_node *mHead = cue->node_head;
+  sentiment_ctx *ctx = (sentiment_ctx *)userdata;
+  const char *body = webvtt_string_text( &cue->body );
+  sentiment_result result = analyze_sentiment( body );
 
-  printf("The que body data:[%s]\n", webvtt_string_text(&cue->body) );
-  printf("The internal data length:[%d]\n",mHead->data.internal_data->length);
-  printf("The internal data childern:[%s]\n",webvtt_string_text(mHead->data.internal_data->children));
-
-  if (!mHead || mHead->kind != WEBVTT_HEAD_NODE) {
-     printf(" mHead node is null\n");
-     return  -1;
-     }
-
-  printf("The letter type is [%d]\n",mHead->kind);
-  switch (mHead->kind) {
-    case WEBVTT_BOLD:
-      printf("BOLD\n");
-      break;
-
-    case WEBVTT_ITALIC:
-      printf("ITALIC\n");
-      break;
-
-    case WEBVTT_UNDERLINE:
-      printf("UNDERLINE\n");
-      break;
-
-    case WEBVTT_RUBY:
-      printf("RUBY\n");
-      break;
-
-    case WEBVTT_RUBY_TEXT:
-      printf("RUBY_TEXT\n");
-      break;
-
-    case WEBVTT_VOICE:
-      printf("VOICE\n");
-      break;
-
-    case WEBVTT_CLASS:
-      printf("CLASS\n");
-      break;
-
-    default:
-      printf("DEFAULT\n");
-      break;
-
+  if( ctx ) {
+    ++ctx->cues_processed;
+    ctx->total_score += result.score;
+    ctx->positive_matches += result.positive_matches;
+    ctx->negative_matches += result.negative_matches;
   }
 
-
+  printf( "Cue %d: \"%s\"\n", ctx ? ctx->cues_processed : 0, body ? body : "" );
+  printf( "  Sentiment score: %d (positive %d / negative %d)\n",
+          result.score, result.positive_matches, result.negative_matches );
 }
 
 int
@@ -169,7 +221,11 @@ main( int argc, char **argv )
   }
 
 //  webvtt_init_node(&mHead);
-  if( ( result = webvtt_create_parser( &cue, &error, (void *)input_file, &vtt ) ) != WEBVTT_SUCCESS ) {
+  sentiment_ctx ctx;
+  memset( &ctx, 0, sizeof( ctx ) );
+  ctx.filename = input_file;
+
+  if( ( result = webvtt_create_parser( &cue, &error, (void *)&ctx, &vtt ) ) != WEBVTT_SUCCESS ) {
     fprintf( stderr, "error: failed to create VTT parser.\n" );
     fclose( fh );
     return 1;
@@ -228,7 +284,18 @@ main( int argc, char **argv )
 #endif
 
 
-webvtt_delete_parser( vtt );
+  webvtt_delete_parser( vtt );
   fclose( fh );
+
+  if( ctx.cues_processed > 0 ) {
+    double avg = (double)ctx.total_score / (double)ctx.cues_processed;
+    printf( "\nProcessed %d cues from `%s`\n", ctx.cues_processed, input_file );
+    printf( "Aggregate sentiment score: %d\n", ctx.total_score );
+    printf( "Average sentiment per cue: %.2f\n", avg );
+    printf( "Positive matches: %d | Negative matches: %d\n",
+            ctx.positive_matches, ctx.negative_matches );
+  } else {
+    printf( "\nNo cues were parsed from `%s`.\n", input_file );
+  }
   return ret;
 }
